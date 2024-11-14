@@ -2,9 +2,8 @@ from pydantic import BaseModel
 from typing import List
 
 class ProductSchema(BaseModel):
-    id: str
+    number: str  # Menggunakan number sebagai identifier utama
     name: str
-    number: str
     category: str
     price: float
 
@@ -13,8 +12,8 @@ class ProductSchema(BaseModel):
 
 class ReceiptItemSchema(BaseModel):
     id: int
-    receipt_id: str
-    product_id: str
+    receipt_number: str  # Menggunakan number untuk receipt
+    product_number: str  # Menggunakan number untuk product
     quantity: int
     gross: float
     net: float
@@ -24,10 +23,9 @@ class ReceiptItemSchema(BaseModel):
         orm_mode = True
 
 class ReceiptSchema(BaseModel):
-    id: str
-    number: str
+    number: str  # Menggunakan number sebagai identifier utama
     booking_time: str
-    cancelled: str
+    cancelled: bool
     gross_total: float
     net_total: float
     tax_total: float
@@ -38,4 +36,4 @@ class ReceiptSchema(BaseModel):
 
 # Schema untuk validasi basket
 class BasketRequest(BaseModel):
-    basket: List[str]
+    basket: List[str]  # List of product numbers

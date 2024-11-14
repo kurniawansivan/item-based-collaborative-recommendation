@@ -49,7 +49,7 @@ async def load_products(db: Session = Depends(get_db)):
 
         products_data = response.json()["results"]
         for product in products_data:
-            existing_product = db.query(Product).filter_by(id=product["id"]).first()
+            existing_product = db.query(Product).filter_by(number=product["number"]).first()
             if existing_product:
                 existing_product.name = product["name"]
                 existing_product.number = product["number"]
@@ -76,7 +76,7 @@ async def load_receipts(db: Session = Depends(get_db)):
 
         receipts_data = response.json()["results"]
         for receipt in receipts_data:
-            existing_receipt = db.query(Receipt).filter_by(id=receipt["id"]).first()
+            existing_receipt = db.query(Receipt).filter_by(number=receipt["number"]).first()
             if existing_receipt:
                 existing_receipt.number = receipt["number"]
                 existing_receipt.booking_time = receipt["bookingTime"]
@@ -97,22 +97,24 @@ async def load_receipts(db: Session = Depends(get_db)):
                 db.add(db_receipt)
 
             for item in receipt.get("items", []):
-                existing_item = db.query(ReceiptItem).filter_by(receipt_id=receipt["id"], product_id=item["product"]["id"]).first()
-                if existing_item:
-                    existing_item.quantity = item["quantity"]
-                    existing_item.gross = item["total"]["gross"]
-                    existing_item.net = item["total"]["net"]
-                    existing_item.tax = item["total"]["taxPayments"][0]["amount"]
-                else:
-                    db_item = ReceiptItem(
-                        receipt_id=receipt["id"],
-                        product_id=item["product"]["id"],
-                        quantity=item["quantity"],
-                        gross=item["total"]["gross"],
-                        net=item["total"]["net"],
-                        tax=item["total"]["taxPayments"][0]["amount"]
-                    )
-                    db.add(db_item)
+                product = db.query(Product).filter_by(id=item["product"]["id"]).first()
+                if product:
+                    existing_item = db.query(ReceiptItem).filter_by(receipt_id=receipt["id"], product_id=product.id).first()
+                    if existing_item:
+                        existing_item.quantity = item["quantity"]
+                        existing_item.gross = item["total"]["gross"]
+                        existing_item.net = item["total"]["net"]
+                        existing_item.tax = item["total"]["taxPayments"][0]["amount"]
+                    else:
+                        db_item = ReceiptItem(
+                            receipt_id=receipt["id"],
+                            product_id=product.id,
+                            quantity=item["quantity"],
+                            gross=item["total"]["gross"],
+                            net=item["total"]["net"],
+                            tax=item["total"]["taxPayments"][0]["amount"]
+                        )
+                        db.add(db_item)
                     
         db.commit()
     return {"message": "Receipts loaded successfully"}
@@ -122,31 +124,43 @@ def generate_recommendations_endpoint(db: Session = Depends(get_db)):
     generate_recommendations(db)
     return {"message": "Recommendations generated successfully"}
 
-@app.get("/recommendations/{product_id}")
-def get_recommendations(product_id: str, db: Session = Depends(get_db)):
-    recommendations = db.query(Recommendation).filter_by(product_id=product_id).all()
+@app.get("/recommendations/{product_number}")
+def get_recommendations(product_number: str, db: Session = Depends(get_db)):
+    """
+    Get recommendations based on product number.
+    """
+    product = db.query(Product).filter_by(number=product_number).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    recommendations = db.query(Recommendation).filter_by(product_id=product.id).all()
     if not recommendations:
         raise HTTPException(status_code=404, detail="No recommendations found for this product")
-    return {"recommended_products": [rec.recommended_product_id for rec in recommendations]}
+
+    recommended_numbers = [
+        db.query(Product).filter_by(id=rec.recommended_product_id).first().number
+        for rec in recommendations
+    ]
+    return {"recommended_products": recommended_numbers}
 
 @app.post("/basket_recommendations/")
 def get_basket_recommendations(data: BasketRequest, db: Session = Depends(get_db)):
     """
-    Get product recommendations based on items in the user's basket.
-    :param data: BasketRequest containing a list of product IDs currently in the basket.
+    Get product recommendations based on items in the basket using product numbers.
     """
-    basket = data.basket
-    recommended_products = defaultdict(int)
-    
-    # Collect recommendations for each item in the basket
-    for product_id in basket:
-        recommendations = db.query(Recommendation).filter_by(product_id=product_id).all()
+    basket_numbers = data.basket
+    recommended_numbers = defaultdict(int)
+
+    for number in basket_numbers:
+        product = db.query(Product).filter_by(number=number).first()
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Product with number {number} not found")
+        recommendations = db.query(Recommendation).filter_by(product_id=product.id).all()
         for rec in recommendations:
-            if rec.recommended_product_id not in basket:
-                recommended_products[rec.recommended_product_id] += 1
+            recommended_product = db.query(Product).filter_by(id=rec.recommended_product_id).first()
+            if recommended_product and recommended_product.number not in basket_numbers:
+                recommended_numbers[recommended_product.number] += 1
 
-    # Sort recommendations by frequency of occurrence in recommendations
-    sorted_recommendations = sorted(recommended_products.items(), key=lambda x: -x[1])
-    top_recommendations = [product_id for product_id, _ in sorted_recommendations[:5]]  # Top 5
-
-    return {"recommended_products": top_recommendations}
+    # Sort and return the top 3 recommendations
+    sorted_recommendations = sorted(recommended_numbers.items(), key=lambda x: -x[1])[:3]
+    return {"recommended_products": [number for number, _ in sorted_recommendations]}
